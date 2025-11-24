@@ -121,13 +121,22 @@ app.post('/convert', upload.single('factura'), (req, res) => {
       return res.status(400).json({ error: 'Nu am gasit produse in factura' });
     }
 
-    // Create Oblio format workbook
-    const oblioData = [
-      ['Denumire produs', 'Cod produs', 'U.M.', 'Cantitate', 'Pret achizitie', 'Cota TVA', 'TVA inclus']
-    ];
+    // Create Oblio format workbook (must match exact format with 27 columns)
+    const oblioData = [];
 
+    // Header row with 27 columns (7 with data, 20 empty)
+    const headerRow = [
+      'Denumire produs', 'Cod produs', 'U.M.', 'Cantitate', 'Pret achizitie', 'Cota TVA', 'TVA inclus'
+    ];
+    // Add 20 null columns to match Oblio format
+    for (let i = 0; i < 20; i++) {
+      headerRow.push(null);
+    }
+    oblioData.push(headerRow);
+
+    // Product rows with 27 columns each
     products.forEach(p => {
-      oblioData.push([
+      const row = [
         p.denumire,
         p.cod,
         p.um,
@@ -135,8 +144,20 @@ app.post('/convert', upload.single('factura'), (req, res) => {
         p.pret,
         p.cotaTVA,
         p.tvaInclus
-      ]);
+      ];
+      // Add 20 null columns
+      for (let i = 0; i < 20; i++) {
+        row.push(null);
+      }
+      oblioData.push(row);
     });
+
+    // Add empty row at the end (27 null columns)
+    const emptyRow = [];
+    for (let i = 0; i < 27; i++) {
+      emptyRow.push(null);
+    }
+    oblioData.push(emptyRow);
 
     const newWorkbook = XLSX.utils.book_new();
     const newSheet = XLSX.utils.aoa_to_sheet(oblioData);
@@ -152,7 +173,8 @@ app.post('/convert', upload.single('factura'), (req, res) => {
       { wch: 10 }  // TVA inclus
     ];
 
-    XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Document furnizor');
+    // IMPORTANT: Sheet name must be exactly 'sheet 1' (lowercase with space)
+    XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'sheet 1');
 
     // Generate output file
     const outputFilename = `oblio_import_${invoiceId || Date.now()}.xls`;
