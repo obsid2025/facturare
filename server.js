@@ -40,12 +40,65 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Helper function to create Oblio XLS from products
+function createOblioWorkbook(products) {
+  const oblioData = [];
+
+  // Header row with 27 columns (7 with data, 20 empty)
+  const headerRow = [
+    'Denumire produs', 'Cod produs', 'U.M.', 'Cantitate', 'Pret achizitie', 'Cota TVA', 'TVA inclus'
+  ];
+  for (let i = 0; i < 20; i++) {
+    headerRow.push(null);
+  }
+  oblioData.push(headerRow);
+
+  // Product rows with 27 columns each
+  products.forEach(p => {
+    const row = [
+      p.denumire,
+      p.cod,
+      p.um,
+      p.cantitate,
+      p.pret,
+      p.cotaTVA,
+      p.tvaInclus
+    ];
+    for (let i = 0; i < 20; i++) {
+      row.push(null);
+    }
+    oblioData.push(row);
+  });
+
+  // Add empty row at the end (27 null columns)
+  const emptyRow = [];
+  for (let i = 0; i < 27; i++) {
+    emptyRow.push(null);
+  }
+  oblioData.push(emptyRow);
+
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet(oblioData);
+
+  // Set column widths
+  sheet['!cols'] = [
+    { wch: 60 }, { wch: 15 }, { wch: 6 }, { wch: 10 },
+    { wch: 15 }, { wch: 10 }, { wch: 10 }
+  ];
+
+  XLSX.utils.book_append_sheet(workbook, sheet, 'sheet 1');
+  return workbook;
+}
+
 // Convert Qogita to Oblio format
 app.post('/convert', upload.single('factura'), (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Nu a fost incarcat niciun fisier' });
     }
+
+    // Get markup from request body
+    const markupRON = parseFloat(req.body.markup) || 0;
 
     const workbook = XLSX.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
@@ -121,83 +174,78 @@ app.post('/convert', upload.single('factura'), (req, res) => {
       return res.status(400).json({ error: 'Nu am gasit produse in factura' });
     }
 
-    // Create Oblio format workbook (must match exact format with 27 columns)
-    const oblioData = [];
+    // Calculate total value for markup distribution
+    const totalValue = products.reduce((sum, p) => sum + (p.pret * p.cantitate), 0);
 
-    // Header row with 27 columns (7 with data, 20 empty)
-    const headerRow = [
-      'Denumire produs', 'Cod produs', 'U.M.', 'Cantitate', 'Pret achizitie', 'Cota TVA', 'TVA inclus'
-    ];
-    // Add 20 null columns to match Oblio format
-    for (let i = 0; i < 20; i++) {
-      headerRow.push(null);
-    }
-    oblioData.push(headerRow);
+    // Generate file for Firma 1 (original prices)
+    const workbook1 = createOblioWorkbook(products);
+    const filename1 = `oblio_firma1_${invoiceId || Date.now()}.xls`;
+    const filepath1 = path.join('./uploads', filename1);
+    XLSX.writeFile(workbook1, filepath1, { bookType: 'xls' });
 
-    // Product rows with 27 columns each
-    products.forEach(p => {
-      const row = [
-        p.denumire,
-        p.cod,
-        p.um,
-        p.cantitate,
-        p.pret,
-        p.cotaTVA,
-        p.tvaInclus
-      ];
-      // Add 20 null columns
-      for (let i = 0; i < 20; i++) {
-        row.push(null);
-      }
-      oblioData.push(row);
-    });
+    let filename2 = null;
+    let totalValue2 = totalValue;
+    let products2Preview = [];
 
-    // Add empty row at the end (27 null columns)
-    const emptyRow = [];
-    for (let i = 0; i < 27; i++) {
-      emptyRow.push(null);
-    }
-    oblioData.push(emptyRow);
+    // Generate file for Firma 2 (with markup) if markup > 0
+    if (markupRON > 0) {
+      const products2 = products.map(p => {
+        const productValue = p.pret * p.cantitate;
+        const productWeight = productValue / totalValue;
+        const productMarkup = markupRON * productWeight;
+        const newPrice = p.pret + (productMarkup / p.cantitate);
 
-    const newWorkbook = XLSX.utils.book_new();
-    const newSheet = XLSX.utils.aoa_to_sheet(oblioData);
+        return {
+          ...p,
+          pret: parseFloat(newPrice.toFixed(2))
+        };
+      });
 
-    // Set column widths
-    newSheet['!cols'] = [
-      { wch: 60 }, // Denumire produs
-      { wch: 15 }, // Cod produs
-      { wch: 6 },  // U.M.
-      { wch: 10 }, // Cantitate
-      { wch: 15 }, // Pret achizitie
-      { wch: 10 }, // Cota TVA
-      { wch: 10 }  // TVA inclus
-    ];
+      totalValue2 = products2.reduce((sum, p) => sum + (p.pret * p.cantitate), 0);
 
-    // IMPORTANT: Sheet name must be exactly 'sheet 1' (lowercase with space)
-    XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'sheet 1');
+      const workbook2 = createOblioWorkbook(products2);
+      filename2 = `oblio_firma2_${invoiceId || Date.now()}.xls`;
+      const filepath2 = path.join('./uploads', filename2);
+      XLSX.writeFile(workbook2, filepath2, { bookType: 'xls' });
 
-    // Generate output file
-    const outputFilename = `oblio_import_${invoiceId || Date.now()}.xls`;
-    const outputPath = path.join('./uploads', outputFilename);
-    XLSX.writeFile(newWorkbook, outputPath, { bookType: 'xls' });
-
-    // Clean up input file
-    fs.unlinkSync(req.file.path);
-
-    res.json({
-      success: true,
-      invoiceId,
-      invoiceDate,
-      productsCount: products.length,
-      totalValue: products.reduce((sum, p) => sum + (p.pret * p.cantitate), 0).toFixed(2),
-      downloadUrl: `/download/${outputFilename}`,
-      products: products.map(p => ({
+      products2Preview = products2.map(p => ({
         denumire: p.denumire.substring(0, 50) + (p.denumire.length > 50 ? '...' : ''),
         cod: p.cod,
         cantitate: p.cantitate,
         pret: p.pret
-      }))
-    });
+      }));
+    }
+
+    // Clean up input file
+    fs.unlinkSync(req.file.path);
+
+    const response = {
+      success: true,
+      invoiceId,
+      invoiceDate,
+      productsCount: products.length,
+      firma1: {
+        totalValue: totalValue.toFixed(2),
+        downloadUrl: `/download/${filename1}`,
+        products: products.map(p => ({
+          denumire: p.denumire.substring(0, 50) + (p.denumire.length > 50 ? '...' : ''),
+          cod: p.cod,
+          cantitate: p.cantitate,
+          pret: p.pret
+        }))
+      }
+    };
+
+    if (filename2) {
+      response.firma2 = {
+        markup: markupRON,
+        totalValue: totalValue2.toFixed(2),
+        downloadUrl: `/download/${filename2}`,
+        products: products2Preview
+      };
+    }
+
+    res.json(response);
 
   } catch (error) {
     console.error('Conversion error:', error);

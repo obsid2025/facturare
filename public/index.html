@@ -299,6 +299,23 @@
         </div>
       </div>
 
+      <div style="margin-top: 20px; max-width: 500px; margin-left: auto; margin-right: auto;">
+        <label style="display: block; margin-bottom: 8px; color: #8892b0; font-size: 0.9rem;">
+          Adaos comercial pentru firma 2 (RON):
+        </label>
+        <input
+          type="number"
+          id="markupInput"
+          placeholder="Ex: 50, 100, 150..."
+          step="0.01"
+          min="0"
+          style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: #fff; font-size: 1rem;"
+        >
+        <p style="margin-top: 6px; font-size: 0.8rem; color: #666;">
+          Lasă gol sau 0 pentru a genera doar fișier firma 1
+        </p>
+      </div>
+
       <div style="text-align: center;">
         <button class="btn" id="convertBtn" disabled>Converteste in format Oblio</button>
       </div>
@@ -323,29 +340,57 @@
           <div class="stat-value" id="statProducts">0</div>
           <div class="stat-label">Produse</div>
         </div>
-        <div class="stat-item">
-          <div class="stat-value" id="statTotal">0.00</div>
-          <div class="stat-label">Valoare (EUR)</div>
+      </div>
+
+      <!-- Firma 1 Section -->
+      <div style="background: rgba(0,217,255,0.05); padding: 20px; border-radius: 12px; margin: 20px 0;">
+        <h3 style="color: #00d9ff; margin-bottom: 15px;">📦 Firma 1 - Preturi achizitie Qogita</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+          <div>
+            <div style="font-size: 1.5rem; font-weight: 700; color: #00ff88;" id="statTotal1">0.00 EUR</div>
+            <div style="font-size: 0.85rem; color: #8892b0;">Valoare totala</div>
+          </div>
+          <a class="btn btn-download" id="downloadBtn1" href="#" download style="margin: 0;">Descarca Firma 1</a>
+        </div>
+        <div style="overflow-x: auto; margin-top: 15px;">
+          <table class="products-table">
+            <thead>
+              <tr>
+                <th>Denumire</th>
+                <th>Cod (GTIN)</th>
+                <th>Cant.</th>
+                <th>Pret</th>
+              </tr>
+            </thead>
+            <tbody id="productsTable1"></tbody>
+          </table>
         </div>
       </div>
 
-      <div style="text-align: center;">
-        <a class="btn btn-download" id="downloadBtn" href="#" download>Descarca fisier Oblio</a>
-      </div>
-
-      <h3 style="margin-top: 30px; margin-bottom: 15px; color: #8892b0;">Produse extrase:</h3>
-      <div style="overflow-x: auto;">
-        <table class="products-table">
-          <thead>
-            <tr>
-              <th>Denumire</th>
-              <th>Cod (GTIN)</th>
-              <th>Cant.</th>
-              <th>Pret</th>
-            </tr>
-          </thead>
-          <tbody id="productsTable"></tbody>
-        </table>
+      <!-- Firma 2 Section -->
+      <div id="firma2Section" style="background: rgba(0,255,136,0.05); padding: 20px; border-radius: 12px; margin: 20px 0; display: none;">
+        <h3 style="color: #00ff88; margin-bottom: 15px;">🏢 Firma 2 - Preturi cu adaos comercial</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+          <div>
+            <div style="font-size: 1.5rem; font-weight: 700; color: #00ff88;" id="statTotal2">0.00 EUR</div>
+            <div style="font-size: 0.85rem; color: #8892b0;">Valoare totala</div>
+            <div style="font-size: 0.9rem; color: #00d9ff; margin-top: 5px;" id="markupDisplay">+0 RON adaos</div>
+          </div>
+          <a class="btn btn-download" id="downloadBtn2" href="#" download style="margin: 0;">Descarca Firma 2</a>
+        </div>
+        <div style="overflow-x: auto; margin-top: 15px;">
+          <table class="products-table">
+            <thead>
+              <tr>
+                <th>Denumire</th>
+                <th>Cod (GTIN)</th>
+                <th>Cant.</th>
+                <th>Pret</th>
+              </tr>
+            </thead>
+            <tbody id="productsTable2"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -360,12 +405,16 @@
     const fileInfo = document.getElementById('fileInfo');
     const fileName = document.getElementById('fileName');
     const fileSize = document.getElementById('fileSize');
+    const markupInput = document.getElementById('markupInput');
     const convertBtn = document.getElementById('convertBtn');
     const loading = document.getElementById('loading');
     const error = document.getElementById('error');
     const result = document.getElementById('result');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const productsTable = document.getElementById('productsTable');
+    const downloadBtn1 = document.getElementById('downloadBtn1');
+    const downloadBtn2 = document.getElementById('downloadBtn2');
+    const productsTable1 = document.getElementById('productsTable1');
+    const productsTable2 = document.getElementById('productsTable2');
+    const firma2Section = document.getElementById('firma2Section');
 
     let selectedFile = null;
 
@@ -432,6 +481,7 @@
 
       const formData = new FormData();
       formData.append('factura', selectedFile);
+      formData.append('markup', markupInput.value || '0');
 
       try {
         const response = await fetch('/convert', {
@@ -445,16 +495,16 @@
           throw new Error(data.error || 'Eroare la procesare');
         }
 
-        // Show results
+        // Show basic stats
         document.getElementById('statInvoice').textContent = data.invoiceId || '-';
         document.getElementById('statProducts').textContent = data.productsCount;
-        document.getElementById('statTotal').textContent = data.totalValue;
 
-        downloadBtn.href = data.downloadUrl;
-        downloadBtn.download = `oblio_import_${data.invoiceId || 'factura'}.xls`;
+        // Show Firma 1 results
+        document.getElementById('statTotal1').textContent = data.firma1.totalValue + ' EUR';
+        downloadBtn1.href = data.firma1.downloadUrl;
+        downloadBtn1.download = `oblio_firma1_${data.invoiceId || 'factura'}.xls`;
 
-        // Populate products table
-        productsTable.innerHTML = data.products.map(p => `
+        productsTable1.innerHTML = data.firma1.products.map(p => `
           <tr>
             <td>${escapeHtml(p.denumire)}</td>
             <td>${escapeHtml(p.cod)}</td>
@@ -462,6 +512,26 @@
             <td>${p.pret.toFixed(2)} EUR</td>
           </tr>
         `).join('');
+
+        // Show Firma 2 results if exists
+        if (data.firma2) {
+          firma2Section.style.display = 'block';
+          document.getElementById('statTotal2').textContent = data.firma2.totalValue + ' EUR';
+          document.getElementById('markupDisplay').textContent = `+${data.firma2.markup} RON adaos comercial`;
+          downloadBtn2.href = data.firma2.downloadUrl;
+          downloadBtn2.download = `oblio_firma2_${data.invoiceId || 'factura'}.xls`;
+
+          productsTable2.innerHTML = data.firma2.products.map(p => `
+            <tr>
+              <td>${escapeHtml(p.denumire)}</td>
+              <td>${escapeHtml(p.cod)}</td>
+              <td>${p.cantitate}</td>
+              <td>${p.pret.toFixed(2)} EUR</td>
+            </tr>
+          `).join('');
+        } else {
+          firma2Section.style.display = 'none';
+        }
 
         loading.classList.remove('show');
         result.classList.add('show');
