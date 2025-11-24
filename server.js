@@ -1,0 +1,211 @@
+const express = require('express');
+const multer = require('multer');
+const XLSX = require('xlsx');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Setup multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = './uploads';
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext !== '.xlsx' && ext !== '.xls') {
+      return cb(new Error('Doar fisiere Excel (.xlsx, .xls) sunt acceptate'));
+    }
+    cb(null, true);
+  }
+});
+
+app.use(express.static('public'));
+app.use(express.json());
+
+// Serve main page
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Convert Qogita to Oblio format
+app.post('/convert', upload.single('factura'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nu a fost incarcat niciun fisier' });
+    }
+
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+    // Find the header row (contains "Name", "GTIN", "Price", "Quantity")
+    let headerRowIndex = -1;
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      if (row && row[0] === 'Name' && row.includes('GTIN') && row.includes('Price') && row.includes('Quantity')) {
+        headerRowIndex = i;
+        break;
+      }
+    }
+
+    if (headerRowIndex === -1) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Format invalid - nu am gasit header-ul cu produse (Name, GTIN, Price, Quantity)' });
+    }
+
+    const headers = data[headerRowIndex];
+    const nameIdx = headers.indexOf('Name');
+    const gtinIdx = headers.indexOf('GTIN');
+    const priceIdx = headers.indexOf('Price');
+    const quantityIdx = headers.indexOf('Quantity');
+    const vatIdx = headers.indexOf('VAT');
+    const rateIdx = headers.indexOf('Rate');
+
+    // Extract invoice info
+    let invoiceId = '';
+    let invoiceDate = '';
+    for (let i = 0; i < headerRowIndex; i++) {
+      if (data[i] && data[i][0] === 'Invoice ID') {
+        invoiceId = data[i][1] || '';
+      }
+      if (data[i] && data[i][0] === 'Date') {
+        invoiceDate = data[i][1] || '';
+      }
+    }
+
+    // Extract products
+    const products = [];
+    for (let i = headerRowIndex + 1; i < data.length; i++) {
+      const row = data[i];
+      if (!row || !row[nameIdx] || row[nameIdx] === '' || row[0] === '© 2025 Qogita.') {
+        continue;
+      }
+
+      const name = row[nameIdx] || '';
+      const gtin = row[gtinIdx] || '';
+      const price = parseFloat(row[priceIdx]) || 0;
+      const quantity = parseInt(row[quantityIdx]) || 0;
+
+      // Rate is 0 for ABC transactions (reverse charge)
+      const vatRate = parseFloat(row[rateIdx]) || 0;
+
+      if (name && quantity > 0) {
+        products.push({
+          denumire: name,
+          cod: gtin.toString(),
+          um: 'buc',
+          cantitate: quantity,
+          pret: price,
+          cotaTVA: vatRate,
+          tvaInclus: 'NU'
+        });
+      }
+    }
+
+    if (products.length === 0) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Nu am gasit produse in factura' });
+    }
+
+    // Create Oblio format workbook
+    const oblioData = [
+      ['Denumire produs', 'Cod produs', 'U.M.', 'Cantitate', 'Pret achizitie', 'Cota TVA', 'TVA inclus']
+    ];
+
+    products.forEach(p => {
+      oblioData.push([
+        p.denumire,
+        p.cod,
+        p.um,
+        p.cantitate,
+        p.pret,
+        p.cotaTVA,
+        p.tvaInclus
+      ]);
+    });
+
+    const newWorkbook = XLSX.utils.book_new();
+    const newSheet = XLSX.utils.aoa_to_sheet(oblioData);
+
+    // Set column widths
+    newSheet['!cols'] = [
+      { wch: 60 }, // Denumire produs
+      { wch: 15 }, // Cod produs
+      { wch: 6 },  // U.M.
+      { wch: 10 }, // Cantitate
+      { wch: 15 }, // Pret achizitie
+      { wch: 10 }, // Cota TVA
+      { wch: 10 }  // TVA inclus
+    ];
+
+    XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Document furnizor');
+
+    // Generate output file
+    const outputFilename = `oblio_import_${invoiceId || Date.now()}.xls`;
+    const outputPath = path.join('./uploads', outputFilename);
+    XLSX.writeFile(newWorkbook, outputPath, { bookType: 'xls' });
+
+    // Clean up input file
+    fs.unlinkSync(req.file.path);
+
+    res.json({
+      success: true,
+      invoiceId,
+      invoiceDate,
+      productsCount: products.length,
+      totalValue: products.reduce((sum, p) => sum + (p.pret * p.cantitate), 0).toFixed(2),
+      downloadUrl: `/download/${outputFilename}`,
+      products: products.map(p => ({
+        denumire: p.denumire.substring(0, 50) + (p.denumire.length > 50 ? '...' : ''),
+        cod: p.cod,
+        cantitate: p.cantitate,
+        pret: p.pret
+      }))
+    });
+
+  } catch (error) {
+    console.error('Conversion error:', error);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ error: 'Eroare la procesare: ' + error.message });
+  }
+});
+
+// Download converted file
+app.get('/download/:filename', (req, res) => {
+  const filepath = path.join(__dirname, 'uploads', req.params.filename);
+  if (fs.existsSync(filepath)) {
+    res.download(filepath, req.params.filename, (err) => {
+      if (!err) {
+        // Delete file after download
+        setTimeout(() => {
+          if (fs.existsSync(filepath)) {
+            fs.unlinkSync(filepath);
+          }
+        }, 5000);
+      }
+    });
+  } else {
+    res.status(404).json({ error: 'Fisierul nu a fost gasit' });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Open http://localhost:${PORT} in your browser`);
+});
