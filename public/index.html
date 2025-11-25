@@ -300,19 +300,36 @@
       </div>
 
       <div style="margin-top: 20px; max-width: 500px; margin-left: auto; margin-right: auto;">
-        <label style="display: block; margin-bottom: 8px; color: #8892b0; font-size: 0.9rem;">
-          Adaos comercial pentru firma 2 (RON):
-        </label>
-        <input
-          type="number"
-          id="markupInput"
-          placeholder="Ex: 50, 100, 150..."
-          step="0.01"
-          min="0"
-          style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: #fff; font-size: 1rem;"
-        >
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+          <div>
+            <label style="display: block; margin-bottom: 8px; color: #8892b0; font-size: 0.9rem;">
+              Adaos comercial (RON):
+            </label>
+            <input
+              type="number"
+              id="markupInput"
+              placeholder="Ex: 50, 100..."
+              step="0.01"
+              min="0"
+              style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: #fff; font-size: 1rem;"
+            >
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 8px; color: #8892b0; font-size: 0.9rem;">
+              Curs EUR/RON:
+            </label>
+            <input
+              type="number"
+              id="exchangeRateInput"
+              value="5.00"
+              step="0.01"
+              min="0"
+              style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: #fff; font-size: 1rem;"
+            >
+          </div>
+        </div>
         <p style="margin-top: 6px; font-size: 0.8rem; color: #666;">
-          Lasă gol sau 0 pentru a genera doar fișier firma 1
+          Firma 2: prețuri convertite în RON + adaos comercial distribuit proporțional
         </p>
       </div>
 
@@ -406,6 +423,7 @@
     const fileName = document.getElementById('fileName');
     const fileSize = document.getElementById('fileSize');
     const markupInput = document.getElementById('markupInput');
+    const exchangeRateInput = document.getElementById('exchangeRateInput');
     const convertBtn = document.getElementById('convertBtn');
     const loading = document.getElementById('loading');
     const error = document.getElementById('error');
@@ -482,6 +500,7 @@
       const formData = new FormData();
       formData.append('factura', selectedFile);
       formData.append('markup', markupInput.value || '0');
+      formData.append('exchangeRate', exchangeRateInput.value || '5.00');
 
       try {
         const response = await fetch('/convert', {
@@ -499,7 +518,7 @@
         document.getElementById('statInvoice').textContent = data.invoiceId || '-';
         document.getElementById('statProducts').textContent = data.productsCount;
 
-        // Show Firma 1 results
+        // Show Firma 1 results (EUR)
         document.getElementById('statTotal1').textContent = data.firma1.totalValue + ' EUR';
         downloadBtn1.href = data.firma1.downloadUrl;
         downloadBtn1.download = `oblio_firma1_${data.invoiceId || 'factura'}.xls`;
@@ -513,11 +532,12 @@
           </tr>
         `).join('');
 
-        // Show Firma 2 results if exists
+        // Show Firma 2 results if exists (RON)
         if (data.firma2) {
           firma2Section.style.display = 'block';
-          document.getElementById('statTotal2').textContent = data.firma2.totalValue + ' EUR';
-          document.getElementById('markupDisplay').textContent = `+${data.firma2.markup} RON adaos comercial`;
+          document.getElementById('statTotal2').textContent = data.firma2.totalValue + ' RON';
+          const markupText = data.firma2.markup > 0 ? ` + ${data.firma2.markup} RON adaos` : '';
+          document.getElementById('markupDisplay').textContent = `Curs: ${data.firma2.exchangeRate} EUR/RON${markupText}`;
           downloadBtn2.href = data.firma2.downloadUrl;
           downloadBtn2.download = `oblio_firma2_${data.invoiceId || 'factura'}.xls`;
 
@@ -526,7 +546,7 @@
               <td>${escapeHtml(p.denumire)}</td>
               <td>${escapeHtml(p.cod)}</td>
               <td>${p.cantitate}</td>
-              <td>${p.pret.toFixed(2)} EUR</td>
+              <td>${p.pret.toFixed(2)} RON</td>
             </tr>
           `).join('');
         } else {

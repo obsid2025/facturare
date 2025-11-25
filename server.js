@@ -97,8 +97,9 @@ app.post('/convert', upload.single('factura'), (req, res) => {
       return res.status(400).json({ error: 'Nu a fost incarcat niciun fisier' });
     }
 
-    // Get markup from request body
+    // Get markup and exchange rate from request body
     const markupRON = parseFloat(req.body.markup) || 0;
+    const exchangeRate = parseFloat(req.body.exchangeRate) || 5.00;
 
     const workbook = XLSX.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
@@ -187,17 +188,25 @@ app.post('/convert', upload.single('factura'), (req, res) => {
     let totalValue2 = totalValue;
     let products2Preview = [];
 
-    // Generate file for Firma 2 (with markup) if markup > 0
-    if (markupRON > 0) {
+    // Generate file for Firma 2 (with markup) - prices in RON
+    // Always generate if exchangeRate > 0, markup is optional
+    if (exchangeRate > 0) {
       const products2 = products.map(p => {
-        const productValue = p.pret * p.cantitate;
-        const productWeight = productValue / totalValue;
+        // Convert EUR to RON first
+        const priceRON = p.pret * exchangeRate;
+        const productValueRON = priceRON * p.cantitate;
+
+        // Calculate markup distribution based on RON value
+        const totalValueRON = totalValue * exchangeRate;
+        const productWeight = productValueRON / totalValueRON;
         const productMarkup = markupRON * productWeight;
-        const newPrice = p.pret + (productMarkup / p.cantitate);
+
+        // Final price in RON = converted price + distributed markup
+        const newPriceRON = priceRON + (productMarkup / p.cantitate);
 
         return {
           ...p,
-          pret: parseFloat(newPrice.toFixed(2))
+          pret: parseFloat(newPriceRON.toFixed(2))
         };
       });
 
@@ -239,6 +248,8 @@ app.post('/convert', upload.single('factura'), (req, res) => {
     if (filename2) {
       response.firma2 = {
         markup: markupRON,
+        exchangeRate: exchangeRate,
+        currency: 'RON',
         totalValue: totalValue2.toFixed(2),
         downloadUrl: `/download/${filename2}`,
         products: products2Preview
